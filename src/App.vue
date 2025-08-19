@@ -35,9 +35,9 @@ function navClasses(active) {
     <RouterView v-if="isLoginRoute" />
     <div v-else class="min-h-screen flex flex-col bg-slate-100 text-gray-800">
       <header class="bg-white/90 backdrop-blur border-b border-slate-200 shadow-sm">
-        <div class="max-w-8xl mx-auto pl-10 pr-10 py-4 flex items-center gap-20">
+        <div class="max-w-[1700px] mx-auto pl-12 pr-12 py-3 flex items-center gap-24">
           <h1 @click="go('/claims')" class="text-2xl font-bold cursor-pointer select-none tracking-tight flex items-center gap-1" title="Go to claims">
-            <span class="text-blue-600">Claims</span><span class="text-slate-800">GT</span>
+            <span class="text-blue-600">Claims<span class="text-slate-800">GT</span></span>
           </h1>
           <nav class="flex-1 flex items-center gap-3">
             <RouterLink v-if="isAuthed" to="/claims" v-slot="{ isActive }">
@@ -59,12 +59,12 @@ function navClasses(active) {
           </div>
         </div>
       </header>
-      <main class="flex-1 w-full mx-auto max-w-7xl px-10 pt-8 pb-12">
-        <div class="bg-white rounded-lg shadow border border-slate-200 min-h-[60vh] p-8">
+      <main class="flex-1 w-full mx-auto max-w-[1650px] px-12 pt-10 pb-14">
+        <div class="bg-white rounded-lg shadow border border-slate-200 min-h-[60vh] p-10">
           <RouterView />
         </div>
       </main>
-      <footer class="text-center text-xs text-slate-500 py-6">© {{ new Date().getFullYear() }} Claims System</footer>
+      <footer class="text-center text-xs text-slate-500 py-6">© {{ new Date().getFullYear() }} ClaimsGT</footer>
     </div>
   </div>
 </template>
