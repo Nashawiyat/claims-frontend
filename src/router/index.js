@@ -10,6 +10,12 @@ const routes = [
 		meta: { requiresAuth: false }
 	},
 	{
+		path: '/register',
+		name: 'register',
+		component: () => import('../views/RegisterView.vue'),
+		meta: { requiresAuth: false }
+	},
+	{
 		path: '/claims',
 		name: 'claims',
 		component: () => import('../views/ClaimsView.vue'),

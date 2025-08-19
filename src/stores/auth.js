@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '../api/axios'
+import { loginUser } from '../services/authService'
+import { registerUser } from '../services/authService'
 
 // LocalStorage keys (token key aligns with axios interceptor expectation)
 const TOKEN_KEY = 'auth_token'
@@ -21,8 +23,8 @@ export const useAuthStore = defineStore('auth', {
 	},
 	actions: {
 		async login(email, password) {
-			// POST /api/auth/login expected to return { token, user }
-			const { data } = await api.post('/api/auth/login', { email, password })
+			// Delegate to authService
+			const data = await loginUser(email, password)
 			const token = data?.token
 			const user = data?.user || null
 			if (!token) {
@@ -40,6 +42,35 @@ export const useAuthStore = defineStore('auth', {
 				console.warn('Failed to persist auth data', e)
 			}
 			return user
+		},
+		async register({ name, email, password, role, managerId, manager }) {
+			const selectedManager = manager || managerId
+			const payload = { name, email, password, role }
+			if (role === 'employee') {
+				if (!selectedManager) throw new Error('Manager is required for employee accounts')
+				payload.manager = selectedManager
+			}
+			try {
+				const data = await registerUser(payload)
+				const token = data?.token
+				const user = data?.user || null
+				if (!token) throw new Error('Registration response missing token')
+				const resolvedRole = user?.role || role || null
+				this.token = token
+				this.user = user
+				this.role = resolvedRole
+				try {
+					localStorage.setItem(TOKEN_KEY, token)
+					if (user) localStorage.setItem(USER_KEY, JSON.stringify(user))
+					if (resolvedRole) localStorage.setItem(ROLE_KEY, resolvedRole)
+				} catch (e) {
+					console.warn('Failed to persist auth data after register', e)
+				}
+				return user
+			} catch (e) {
+				const message = e?.response?.data?.message || e?.response?.data?.error || e.message || 'Registration failed'
+				throw new Error(message)
+			}
 		},
 		logout() {
 			this.token = null

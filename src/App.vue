@@ -9,7 +9,7 @@ const auth = useAuthStore()
 
 const role = computed(() => auth.role)
 const isAuthed = computed(() => auth.isAuthenticated)
-const isLoginRoute = computed(() => route.path === '/login')
+const isLoginRoute = computed(() => route.path === '/login' || route.path === '/register')
 
 function go(path) {
   router.push(path)
@@ -25,8 +25,10 @@ function logout() {
     <RouterView v-if="isLoginRoute" />
     <div v-else class="min-h-screen flex flex-col bg-slate-100 text-gray-800">
       <header class="bg-white/90 backdrop-blur border-b border-slate-200 shadow-sm">
-        <div class="max-w-7xl mx-auto pl-4 pr-8 py-4 flex items-center gap-8">
-          <h1 @click="go('/claims')" class="font-semibold text-2xl cursor-pointer select-none tracking-tight text-slate-800">Claims Portal</h1>
+        <div class="max-w-8xl mx-auto pl-10 pr-10 py-4 flex items-center gap-15">
+          <h1 @click="go('/claims')" class="text-2xl font-bold cursor-pointer select-none tracking-tight flex items-center gap-1" title="Go to claims">
+            <span class="text-blue-600">Claims</span><span class="text-slate-800">GT</span>
+          </h1>
           <nav class="flex-1 flex items-center gap-6 text-[15px]">
             <RouterLink v-if="isAuthed" to="/claims" class="hover:text-blue-600 transition-colors" active-class="text-blue-600 font-semibold">Claims</RouterLink>
             <RouterLink v-if="isAuthed && (role==='manager' || role==='admin')" to="/manager" class="hover:text-blue-600 transition-colors" active-class="text-blue-600 font-semibold">Manager</RouterLink>
