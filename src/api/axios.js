@@ -22,6 +22,17 @@ api.interceptors.request.use(
         config.headers = config.headers || {}
         config.headers['Authorization'] = `Bearer ${token}`
       }
+      // Only auto-set JSON Content-Type when body is NOT FormData.
+      const hasBody = !!config.data
+      const isFormData = (typeof FormData !== 'undefined') && config.data instanceof FormData
+      if (hasBody && !isFormData) {
+        config.headers = config.headers || {}
+        // Do not override if a content-type is already specified (case-insensitive check)
+        const existing = Object.keys(config.headers).find(h => h.toLowerCase() === 'content-type')
+        if (!existing) {
+          config.headers['Content-Type'] = 'application/json'
+        }
+      }
     } catch (e) {
       console.warn('Token retrieval failed:', e)
     }
