@@ -49,8 +49,8 @@ function navClasses(active) {
             <RouterLink v-if="isAuthed && (role==='finance' || role==='admin')" to="/finance" v-slot="{ isActive }">
               <span :class="navClasses(isActive)">Finance</span>
             </RouterLink>
-            <RouterLink v-if="isAuthed && role==='admin'" to="/admin" v-slot="{ isActive }">
-              <span :class="navClasses(isActive)">Admin</span>
+            <RouterLink v-if="isAuthed && (role==='admin' || role==='finance')" to="/config" v-slot="{ isActive }">
+              <span :class="navClasses(isActive)">Config</span>
             </RouterLink>
           </nav>
           <div class="flex items-center gap-4">

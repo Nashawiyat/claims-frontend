@@ -23,7 +23,7 @@
 			</div>
 			<div class="flex flex-col">
 				<span class="text-slate-500">Manager</span>
-				<span class="font-medium text-slate-700 truncate" :title="claim.manager?.name">{{ claim.manager?.name || '—' }}</span>
+				<span class="font-medium text-slate-700 truncate" :title="managerDisplay">{{ managerDisplay }}</span>
 			</div>
 			<div v-if="claim.receiptUrl" class="col-span-2">
 				<button type="button" @click.stop="emit('view-receipt', claim)" class="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 cursor-pointer">
@@ -97,6 +97,11 @@ const statusClass = computed(() => {
 		case 'paid': return 'bg-indigo-100 text-indigo-700'
 		default: return 'bg-slate-100 text-slate-600'
 	}
+})
+
+const managerDisplay = computed(() => {
+	if (props.claim?.manager === null || props.claim?._adminClaim) return 'N/A (Admin Claim)'
+	return props.claim?.manager?.name || '—'
 })
 
 const showActions = computed(() => props.canEdit || props.canSubmit || props.canDelete)

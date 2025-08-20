@@ -69,6 +69,10 @@ export const useClaimsStore = defineStore('claims', {
 					const mgr = await fetchUserManager(self._id)
 					if (mgr) this._userCache[mgr._id || mgr.id] = mgr
 					for (const c of this.items) {
+						if (c.manager === null) {
+							c._adminClaim = true
+							continue
+						}
 						if (!c.manager || !c.manager._id || c.manager._id === self.manager) {
 							c.manager = mgr ? { _id: mgr._id || mgr.id, name: mgr.name || mgr.fullName || mgr.email || 'Manager' } : c.manager
 						}
@@ -88,6 +92,7 @@ export const useClaimsStore = defineStore('claims', {
 			const createdByPotentialManagerIds = new Set() // createdBy ids that might be managers (avoid direct fetch to prevent 403)
 			const claimDetailCreatorIds = new Set() // creators we will resolve via claim detail endpoint instead of fetchUser
 			for (const c of this.items) {
+				if (c.manager === null) { c._adminClaim = true }
 				// createdBy enrichment
 				if (c.createdBy) {
 					const createdById = typeof c.createdBy === 'string' ? c.createdBy : c.createdBy._id
@@ -107,6 +112,9 @@ export const useClaimsStore = defineStore('claims', {
 				if (c.manager && c.manager._id && (!c.manager.name || c.manager.name === 'Unknown')) {
 					if (role === 'manager') approverManagerIdsNeedingName.add(c.manager._id)
 					else toFetchUserIds.add(c.manager._id)
+				} else if (c.manager === null) {
+					// Explicitly no manager (admin claim)
+					c._adminClaim = true
 				} else if ((!c.manager || !c.manager._id) && c.createdBy && typeof c.createdBy !== 'string') {
 					if (c.createdBy._id) employeeIdsNeedingManager.add(c.createdBy._id)
 				}

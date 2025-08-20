@@ -24,6 +24,19 @@ export async function fetchUser(id) {
   return data?.user || data
 }
 
+// Fetch a user by email (assumes backend supports this lookup endpoint)
+// Falls back returning null on 404
+export async function fetchUserByEmail(email) {
+  if(!email) throw new Error('fetchUserByEmail: email required')
+  try {
+    const { data } = await api.get(`/api/users/lookup`, { params: { email } })
+    return data?.user || data || null
+  } catch(e){
+    if(e?.response?.status === 404) return null
+    throw e
+  }
+}
+
 /**
  * Fetch a user's manager by employee id.
  * Returns manager object or null.

@@ -131,8 +131,13 @@ async function fetchClaims(){
 }
 
 function canActOn(c){
-  // Cannot act on own claims
-  return c && c.createdBy && (c.createdBy._id !== auth.user?._id) && ['submitted'].includes((c.status||'').toLowerCase())
+  if(!c) return false
+  const statusOk = ['submitted'].includes((c.status||'').toLowerCase())
+  if(!statusOk) return false
+  // Admins may act on their own submitted claims
+  if(auth.role === 'admin') return true
+  // Managers cannot act on their own claims
+  return c.createdBy && (c.createdBy._id !== auth.user?._id)
 }
 
 function confirmApprove(c){
@@ -177,12 +182,17 @@ function formatDate(value){
 async function openView(c){
   viewClaim.value = c
   viewOpen.value = true
-  // fetch manager if missing
-  if (!c.manager || !c.manager.name || c.manager.name === 'Unknown') {
+  // Skip fetch for admin claims (no manager)
+  if (c.manager === null) { c._adminClaim = true; return }
+  // fetch manager if missing and not previously failed
+  if ((!c.manager || !c.manager.name || c.manager.name === 'Unknown') && !c._managerLookupTried) {
+    c._managerLookupTried = true
     try {
       const mgr = await fetchClaimManager(c._id)
       if (mgr) c.manager = { _id: mgr._id || mgr.id, name: mgr.name || mgr.fullName || mgr.email || 'Unknown' }
-    } catch {/* ignore */}
+    } catch (e) {
+      // 404/403 acceptable; leave placeholder
+    }
   }
 }
 

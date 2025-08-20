@@ -89,6 +89,7 @@ const showRejectionReason = computed(()=> (props.claim?.status || '').toLowerCas
 // Manager enrichment (when modal opened) – mirrors logic used in claims store
 const managerRef = ref(null)
 const managerName = computed(()=> {
+  if (props.claim?.manager === null || props.claim?._adminClaim) return 'N/A (Admin Claim)'
   const name = props.claim?.manager?.name || managerRef.value?.name
   return name && name !== 'Unknown' ? name : '—'
 })
@@ -107,6 +108,7 @@ async function maybeFetchManager(){
   const claimId = props.claim?._id
   const existingName = props.claim?.manager?.name
   if (!claimId) return
+  if (props.claim?.manager === null) return // admin claim, no manager
   if (existingName && existingName !== 'Unknown') return
   try {
     fetchingMgr = true

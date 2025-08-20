@@ -34,10 +34,10 @@ const routes = [
 		meta: { requiresAuth: true, roles: ['finance', 'admin'] }
 	},
 	{
-		path: '/admin',
-		name: 'admin',
-		component: () => import('../views/AdminView.vue'),
-		meta: { requiresAuth: true, roles: ['admin'] }
+		path: '/config',
+		name: 'config',
+		component: () => import('../views/ConfigView.vue'),
+		meta: { requiresAuth: true, roles: ['finance','admin'] }
 	},
 	// Fallback could redirect to claims or login
 	{

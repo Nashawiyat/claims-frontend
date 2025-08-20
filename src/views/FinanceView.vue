@@ -159,7 +159,10 @@ async function viewReceipt(c){
   try { await openReceiptForClaim(c) } catch { alerts.error('Failed to load receipt') }
 }
 
-function openView(c){ viewClaim.value = c; viewOpen.value = true }
+function openView(c){
+  viewClaim.value = c; viewOpen.value = true
+  if (c.manager === null) { c._adminClaim = true }
+}
 
 function refresh(){ fetchClaims() }
 
