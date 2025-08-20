@@ -119,7 +119,7 @@ function formatCurrency(v){
 
 async function fetchClaims(){
   loading.value = true; error.value=''
-  try { claims.value = await enrichFinanceClaims(await fetchFinanceClaims()) }
+  try { claims.value = await enrichFinanceClaims(await fetchFinanceClaims({ all: true })) }
   catch (e) { error.value = e?.response?.data?.message || e.message || 'Failed loading claims' }
   finally { loading.value = false }
 }

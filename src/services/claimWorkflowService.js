@@ -9,9 +9,31 @@ function extractList(data) {
 }
 
 // Manager scope
-export async function fetchManagerClaims() {
-  const { data } = await api.get('/api/claims/manager')
-  return extractList(data).map(normalizeClaim)
+export async function fetchManagerClaims(opts = {}) {
+  const { all } = opts
+  if(!all){
+    const { data } = await api.get('/api/claims/manager')
+    return extractList(data).map(normalizeClaim)
+  }
+  // Auto-paginate until fewer than pageSize returned or no more pages metadata.
+  const pageSize = opts.pageSize || 50
+  let page = 1
+  const allClaims = []
+  // Support both count-based and nextPage metadata; stop when empty or repeated.
+  while(true){
+    const { data } = await api.get('/api/claims/manager', { params: { page, limit: pageSize } })
+    const list = extractList(data).map(normalizeClaim)
+    if(!list.length) break
+    allClaims.push(...list)
+    // Break if received less than requested, or metadata indicates end
+    const totalPages = data?.totalPages || data?.pages
+    if(list.length < pageSize) break
+    if(totalPages && page >= totalPages) break
+    page += 1
+    // Safety cap to avoid infinite loops
+    if(page > 200) break
+  }
+  return allClaims
 }
 export async function approveClaim(id) {
   if (!id) throw new Error('approveClaim: id required')
@@ -26,9 +48,27 @@ export async function rejectClaim(id, reason) {
 }
 
 // Finance scope
-export async function fetchFinanceClaims() {
-  const { data } = await api.get('/api/claims/finance')
-  return extractList(data).map(normalizeClaim)
+export async function fetchFinanceClaims(opts = {}) {
+  const { all } = opts
+  if(!all){
+    const { data } = await api.get('/api/claims/finance')
+    return extractList(data).map(normalizeClaim)
+  }
+  const pageSize = opts.pageSize || 50
+  let page = 1
+  const allClaims = []
+  while(true){
+    const { data } = await api.get('/api/claims/finance', { params: { page, limit: pageSize } })
+    const list = extractList(data).map(normalizeClaim)
+    if(!list.length) break
+    allClaims.push(...list)
+    const totalPages = data?.totalPages || data?.pages
+    if(list.length < pageSize) break
+    if(totalPages && page >= totalPages) break
+    page += 1
+    if(page > 200) break
+  }
+  return allClaims
 }
 export async function reimburseClaim(id) {
   if (!id) throw new Error('reimburseClaim: id required')

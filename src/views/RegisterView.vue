@@ -1,30 +1,15 @@
 <template>
-  <div class="min-h-screen h-screen w-full flex flex-col md:flex-row overflow-hidden">
-    <!-- Left Illustration / Image matches login -->
-    <div class="relative hidden md:block md:basis-[58%] lg:basis-[62%] xl:basis-[64%] bg-black">
-      <div class="absolute inset-0" :style="bgStyle"></div>
-      <div class="relative h-full w-full">
-        <div class="absolute left-1/2 -translate-x-1/2 top-[30%] -translate-y-1/2 w-full px-6 md:px-10 lg:px-16">
-          <div class="max-w-xl mx-auto text-center text-white bg-black/45 backdrop-blur-sm rounded-lg px-8 py-10 shadow-2xl ring-1 ring-white/10">
-            <h2 class="text-5xl md:text-6xl font-extrabold tracking-tight mb-6 drop-shadow">Create account</h2>
-            <p class="text-lg md:text-xl leading-relaxed font-medium text-white/95 [text-shadow:_0_1px_2px_rgba(0,0,0,0.6)]">
-              Register to submit and manage claims in one unified dashboard.
-            </p>
-          </div>
-        </div>
-      </div>
+  <div class="w-full flex flex-col items-center">
+    <div class="w-full max-w-xl mb-6">
+      <h1 class="text-xl font-semibold tracking-tight text-slate-800 text-center">Create User</h1>
     </div>
-
-    <!-- Right Register Form -->
-    <div class="flex-1 md:basis-[42%] lg:basis-[38%] xl:basis-[36%] flex items-center justify-center p-8 md:p-10 lg:p-14 bg-slate-50 z-10">
-      <div class="w-full max-w-md">
-        <div class="mb-8 text-center md:text-left select-none">
-          <span class="text-3xl font-bold tracking-tight text-blue-600">Claims<span class="text-slate-800">GT</span></span>
+    <div class="w-full flex justify-center">
+      <div class="w-full max-w-xl bg-white border border-slate-200 rounded-xl shadow-sm p-8 space-y-6">
+        <div>
+          <h2 class="text-lg font-semibold tracking-tight text-slate-800">Register New Account</h2>
+          <p class="text-sm text-slate-500 mt-1">Fill in the details below.</p>
         </div>
-        <div class="bg-white/95 backdrop-blur border border-slate-200 rounded-2xl shadow-xl px-8 py-10">
-          <h1 class="text-2xl font-semibold mb-2 tracking-tight text-slate-800 text-center md:text-left">Register</h1>
-          <p class="text-sm text-slate-500 mb-8 text-center md:text-left">Fill in your details to create your account.</p>
-          <form @submit.prevent="onSubmit" class="space-y-5">
+  <form @submit.prevent="openConfirm" class="space-y-5">
             <!-- Name -->
             <div class="space-y-1.5">
               <label for="name" class="block text-sm font-medium text-slate-700">Full Name</label>
@@ -67,28 +52,33 @@
               <p v-else-if="!loadingManagers && managers.length===0" class="text-xs text-slate-500">No managers found.</p>
             </div>
             <div v-if="error" class="text-red-600 text-sm font-medium" role="alert">{{ error }}</div>
-            <button type="submit" :disabled="loading" class="w-full flex justify-center items-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-md shadow transition-colors">
+          <div class="flex justify-end">
+            <button type="submit" :disabled="loading" class="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium px-5 py-2.5 rounded-md shadow transition-colors">
               <span v-if="!loading">Create Account</span>
               <span v-else>Creating...</span>
             </button>
-          </form>
-          <div class="mt-6 text-sm text-slate-500 text-center md:text-left">
-            Already have an account?
-            <RouterLink to="/login" class="text-blue-600 hover:text-blue-700 font-medium">Login</RouterLink>
           </div>
-        </div>
+        </form>
+        <ConfirmDialog
+          v-model="showConfirm"
+          title="Create New Account"
+          :message="confirmMessage"
+          confirm-text="Create"
+          :loading="loading"
+          @confirm="onSubmit"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, watch, computed } from 'vue'
 import { useAuthStore } from '../stores/auth'
 // API service layer abstraction
 import { fetchManagers as apiFetchManagers } from '../services/userService'
-import loginImg from '../assets/office-work-concept-problems-and-solutions-business-illustration-free-vector.jpg'
+import { useAlertsStore } from '@/stores/alerts'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const name = ref('')
 const email = ref('')
@@ -102,10 +92,12 @@ const error = ref('')
 const managers = ref([])
 const loadingManagers = ref(false)
 
-const router = useRouter()
 const auth = useAuthStore()
+const alerts = useAlertsStore()
+const showConfirm = ref(false)
+const confirmMessage = computed(()=>`Create new ${role.value || 'user'} account for ${email.value || 'email'}?`)
 
-const bgStyle = `background-image:url(${loginImg});background-size:cover;background-position:center;opacity:80%`
+// Layout now matches in-app views; background illustration removed.
 
 watch(role, async (val) => {
   if (val === 'employee' && managers.value.length === 0 && !loadingManagers.value) {
@@ -124,9 +116,21 @@ async function fetchManagers() {
   }
 }
 
-onMounted(() => {
-  // Preload managers if default role is employee (not selected yet so nothing now)
-})
+// No mount side-effects needed
+
+function openConfirm(){
+  error.value=''
+  if(loading.value) return
+  if(password.value !== confirmPassword.value){
+    error.value = 'Passwords do not match'
+    return
+  }
+  if(role.value === 'employee' && !managerId.value){
+    error.value = 'Please select a manager for employee registration'
+    return
+  }
+  showConfirm.value = true
+}
 
 async function onSubmit() {
   error.value = ''
@@ -141,14 +145,18 @@ async function onSubmit() {
   }
   loading.value = true
   try {
-    await auth.register({
+  // Use non-auth-logging creation to preserve current admin session
+  await auth.createUserNoLogin({
       name: name.value,
       email: email.value,
       password: password.value,
       role: role.value,
       manager: role.value === 'employee' ? managerId.value : undefined
     })
-    await router.push('/claims')
+    alerts.success('Account created')
+    showConfirm.value = false
+    // Reset form (keep role & manager? choose to reset all)
+    name.value=''; email.value=''; password.value=''; confirmPassword.value=''; role.value=''; managerId.value=''; managers.value=[]
   } catch (e) {
     const msg = e?.message || e?.response?.data?.message || 'Registration failed'
     error.value = msg

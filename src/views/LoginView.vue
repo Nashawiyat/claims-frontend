@@ -60,10 +60,6 @@
               <span v-else>Signing in...</span>
             </button>
           </form>
-          <div class="mt-6 text-sm text-slate-500 text-center md:text-left">
-            Don't have an account yet?
-            <RouterLink to="/register" class="text-blue-600 hover:text-blue-700 font-medium">Sign Up</RouterLink>
-          </div>
         </div>
       </div>
     </div>

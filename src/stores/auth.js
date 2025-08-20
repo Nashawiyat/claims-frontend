@@ -43,7 +43,37 @@ export const useAuthStore = defineStore('auth', {
 			}
 			return user
 		},
-		async register({ name, email, password, role, managerId, manager }) {
+		// async register({ name, email, password, role, managerId, manager }) {
+		// 	const selectedManager = manager || managerId
+		// 	const payload = { name, email, password, role }
+		// 	if (role === 'employee') {
+		// 		if (!selectedManager) throw new Error('Manager is required for employee accounts')
+		// 		payload.manager = selectedManager
+		// 	}
+		// 	try {
+		// 		const data = await registerUser(payload)
+		// 		const token = data?.token
+		// 		const user = data?.user || null
+		// 		if (!token) throw new Error('Registration response missing token')
+		// 		const resolvedRole = user?.role || role || null
+		// 		this.token = token
+		// 		this.user = user
+		// 		this.role = resolvedRole
+		// 		try {
+		// 			localStorage.setItem(TOKEN_KEY, token)
+		// 			if (user) localStorage.setItem(USER_KEY, JSON.stringify(user))
+		// 			if (resolvedRole) localStorage.setItem(ROLE_KEY, resolvedRole)
+		// 		} catch (e) {
+		// 			console.warn('Failed to persist auth data after register', e)
+		// 		}
+		// 		return user
+		// 	} catch (e) {
+		// 		const message = e?.response?.data?.message || e?.response?.data?.error || e.message || 'Registration failed'
+		// 		throw new Error(message)
+		// 	}
+		// },
+		// Admin-side creation that does NOT log into the new account
+		async createUserNoLogin({ name, email, password, role, managerId, manager }) {
 			const selectedManager = manager || managerId
 			const payload = { name, email, password, role }
 			if (role === 'employee') {
@@ -52,23 +82,10 @@ export const useAuthStore = defineStore('auth', {
 			}
 			try {
 				const data = await registerUser(payload)
-				const token = data?.token
-				const user = data?.user || null
-				if (!token) throw new Error('Registration response missing token')
-				const resolvedRole = user?.role || role || null
-				this.token = token
-				this.user = user
-				this.role = resolvedRole
-				try {
-					localStorage.setItem(TOKEN_KEY, token)
-					if (user) localStorage.setItem(USER_KEY, JSON.stringify(user))
-					if (resolvedRole) localStorage.setItem(ROLE_KEY, resolvedRole)
-				} catch (e) {
-					console.warn('Failed to persist auth data after register', e)
-				}
-				return user
+				// Intentionally ignore returned token/user to preserve current session
+				return data?.user || null
 			} catch (e) {
-				const message = e?.response?.data?.message || e?.response?.data?.error || e.message || 'Registration failed'
+				const message = e?.response?.data?.message || e?.response?.data?.error || e.message || 'User creation failed'
 				throw new Error(message)
 			}
 		},

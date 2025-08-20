@@ -120,7 +120,7 @@ function formatCurrency(v){
 async function fetchClaims(){
   loading.value = true; error.value=''
   try {
-    const list = await fetchManagerClaims()
+  const list = await fetchManagerClaims({ all: true })
     claims.value = list
   // Enrichment now a no-op since backend populates creator names
   enrichClaimUsers(claims.value).catch(()=>{})
