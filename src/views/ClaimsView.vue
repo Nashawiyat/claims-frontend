@@ -36,6 +36,7 @@
           :can-edit="true"
           :can-submit="true"
           :can-delete="true"
+          @open="openView"
           @edit="onEdit"
           @submit="onSubmit"
           @delete="onDelete"
@@ -62,6 +63,7 @@
           :can-edit="false"
           :can-submit="false"
           :can-delete="false"
+          @open="openView"
           @view-receipt="onViewReceipt"
         />
       </div>
@@ -75,6 +77,8 @@
       v-model="modalOpen"
       :mode="modalMode"
       :initial="editingClaimInitial"
+  :is-manager-creator="auth.isManager"
+      :managers="managers"
       @save="onModalSave"
       @close="onModalClose"
   @validation-error="onFormValidationError"
@@ -100,6 +104,10 @@
       @confirm="performDelete"
       @cancel="resetDeleteDialog"
     />
+    <ClaimViewModal
+      v-model="viewOpen"
+      :claim="viewClaim"
+    />
   </div>
 </template>
 
@@ -108,12 +116,14 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useClaimsStore } from '@/stores/claims'
+import { fetchManagers } from '@/services/userService'
 import LimitBar from '@/components/LimitBar.vue'
 import AlertsHost from '@/components/AlertsHost.vue'
 import { useAlertsStore } from '@/stores/alerts'
 const alerts = useAlertsStore()
 import ClaimCard from '@/components/ClaimCard.vue'
 import ClaimFormModal from '@/components/ClaimFormModal.vue'
+import ClaimViewModal from '@/components/ClaimViewModal.vue'
 import api from '@/api/axios'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
@@ -121,19 +131,17 @@ const auth = useAuthStore()
 const claims = useClaimsStore()
 const router = useRouter()
 
-// Redirect non-employee roles
+// Managers can also access this view now; only redirect finance & admin.
 function roleRedirect(r) {
-  if (r === 'employee' || !r) return
-  const map = { manager: '/manager', finance: '/finance', admin: '/admin' }
+  if (r === 'employee' || r === 'manager' || !r) return
+  const map = { finance: '/finance', admin: '/admin' }
   if (map[r]) router.replace(map[r])
 }
-
 roleRedirect(auth.role)
 watch(() => auth.role, roleRedirect)
 
 const loading = computed(() => claims.loading)
-// Keep reference but we no longer display directly
-const error = computed(() => claims.error)
+const error = computed(() => claims.error) // kept for possible future use
 const summary = computed(() => claims.summary)
 const drafts = computed(() => claims.drafts)
 const nonDraftsSorted = computed(() => [...claims.nonDrafts].sort((a,b) => new Date(b.createdAt||0) - new Date(a.createdAt||0)))
@@ -142,27 +150,40 @@ const nonDraftsSorted = computed(() => [...claims.nonDrafts].sort((a,b) => new D
 const modalOpen = ref(false)
 const modalMode = ref('create')
 const editingClaim = ref(null)
-// Modal external error no longer used; all errors surfaced via alerts
+const managers = ref([]) // approving managers (for manager-owned claims)
 
 const editingClaimInitial = computed(() => {
   if (!editingClaim.value) return null
-  const { title, description, amount, receiptUrl } = editingClaim.value
-  return { title, description, amount, receiptUrl }
+  const { title, description, amount, receiptUrl, manager } = editingClaim.value
+  return { title, description, amount, receiptUrl, managerId: manager?._id }
 })
 
 function toastSuccess(msg){ alerts.success(msg) }
 function toastError(msg){ alerts.error(msg) }
 
-function openCreate() {
+async function ensureManagersLoaded(){
+  if (!auth.isManager) return
+  if (managers.value.length) return
+  try {
+    const list = await fetchManagers()
+    const selfId = auth.user?._id || auth.user?.id
+    managers.value = list.filter(m => (m._id||m.id) !== selfId)
+  } catch {/* optional alert */}
+}
+
+async function openCreate() {
+  await ensureManagersLoaded()
   editingClaim.value = null
   modalMode.value = 'create'
   modalOpen.value = true
 }
-function onEdit(claim) {
+async function onEdit(claim) {
+  await ensureManagersLoaded()
   editingClaim.value = claim
   modalMode.value = 'edit'
   modalOpen.value = true
 }
+
 // Submission confirmation flow
 const confirmSubmitOpen = ref(false)
 const submitTarget = ref(null)
@@ -170,7 +191,6 @@ const processingSubmit = ref(false)
 const submitConfirmMessage = computed(() => submitTarget.value ? `Are you sure you want to submit the claim "${submitTarget.value.title}" for $${submitTarget.value.amount?.toFixed?.(2) ?? submitTarget.value.amount}?\nOnce submitted it can no longer be edited.` : '')
 
 function onSubmit(claim) {
-  // Pre-check: if claim would exceed remaining limit, show alert and skip dialog
   const remaining = summary.value?.remaining
   if (typeof remaining === 'number' && claim.amount > remaining) {
     toastError('Submitting this claim would exceed your remaining limit')
@@ -188,11 +208,10 @@ async function performSubmit(){
     toastSuccess('Draft submitted')
     confirmSubmitOpen.value = false
   } catch (e) {
-  const msg = claims.error || e?.response?.data?.message || e.message || 'Failed submitting draft'
-  toastError(msg)
+    const msg = claims.error || e?.response?.data?.message || e.message || 'Failed submitting draft'
+    toastError(msg)
   } finally {
     processingSubmit.value = false
-  // Keep dialog open so user can retry
   }
 }
 
@@ -201,6 +220,11 @@ const confirmDeleteOpen = ref(false)
 const deleteTarget = ref(null)
 const processingDelete = ref(false)
 const deleteConfirmMessage = computed(() => deleteTarget.value ? `Delete draft claim "${deleteTarget.value.title}"? This action cannot be undone.` : '')
+
+// View modal
+const viewOpen = ref(false)
+const viewClaim = ref(null)
+function openView(c){ viewClaim.value = c; viewOpen.value = true }
 
 function onDelete(claim) {
   deleteTarget.value = claim
@@ -224,31 +248,23 @@ async function performDelete(){
 
 async function onViewReceipt(claim) {
   try {
-    // Assume receiptUrl is either full URL or path. We fetch to ensure auth header is sent.
     const url = claim.receiptUrl
     if (!url) return
     const absolute = url.startsWith('http') ? url : api.defaults.baseURL.replace(/\/$/, '') + (url.startsWith('/') ? url : '/' + url)
     const res = await api.get(absolute, { responseType: 'blob' })
-    // Axios already gives us a Blob (res.data). Re-wrapping strips the type, so use it directly.
     let blob = res.data
     let type = res.headers?.['content-type'] || blob.type
     if (!type || type === 'application/octet-stream') {
-      // Infer from extension as fallback
       if (/\.png($|\?)/i.test(url)) type = 'image/png'
       else if (/\.jpe?g($|\?)/i.test(url)) type = 'image/jpeg'
       else if (/\.gif($|\?)/i.test(url)) type = 'image/gif'
       else if (/\.pdf($|\?)/i.test(url)) type = 'application/pdf'
-      if (type && type !== blob.type) {
-        blob = new Blob([blob], { type })
-      }
+      if (type && type !== blob.type) blob = new Blob([blob], { type })
     }
     const objectUrl = URL.createObjectURL(blob)
     window.open(objectUrl, '_blank', 'noopener')
-    // Optional: revoke after a short delay
     setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
-  } catch (e) {
-    toastError('Failed to load receipt')
-  }
+  } catch (e) { toastError('Failed to load receipt') }
 }
 
 async function onModalSave(payload) {
@@ -263,12 +279,11 @@ async function onModalSave(payload) {
       modalOpen.value = false
     }
   } catch (e) {
-  // Always surface backend validation (400) as global alert now (e.g., 'Receipt file is required')
-  const msg = claims.error || e?.response?.data?.message || e.message || 'Failed saving draft'
-  toastError(msg)
+    const msg = claims.error || e?.response?.data?.message || e.message || 'Failed saving draft'
+    toastError(msg)
   }
 }
-function onModalClose() { /* placeholder if additional cleanup later */ }
+function onModalClose() {}
 
 onMounted(async () => {
   try {
@@ -276,7 +291,8 @@ onMounted(async () => {
       claims.fetchMyLimit(),
       claims.fetchMine()
     ])
-  } catch {/* errors surfaced via store */}
+    if (auth.isManager) ensureManagersLoaded()
+  } catch {}
 })
 
 function onFormValidationError(msg){ if (msg) toastError(msg) }

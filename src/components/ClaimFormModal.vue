@@ -34,12 +34,22 @@
 							<textarea id="claim-description" v-model.trim="description" rows="4" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-y" placeholder="Add context or breakdown..."></textarea>
 						</div>
 					<div class="space-y-1.5">
-						<label class="block text-sm font-medium text-slate-700" for="claim-receipt">Receipt</label>
+						<label class="block text-sm font-medium text-slate-700" for="claim-receipt">Receipt<span class="text-red-500">*</span></label>
 						<input id="claim-receipt" ref="fileInput" type="file" accept="image/*,.pdf" @change="onFileChange" class="inline-block text-xs text-slate-500 file:cursor-pointer file:mr-4 file:py-2 file:px-3 file:rounded-md file:border file:border-slate-300 file:text-xs file:font-medium file:bg-slate-50 file:text-slate-700 hover:file:bg-slate-100" />
 						<div v-if="initial?.receiptUrl && !file" class="text-xs flex items-center gap-2">
 							<button type="button" @click="viewExistingReceipt" class="text-blue-600 hover:underline cursor-pointer">Current Receipt</button>
 						</div>
 						<p v-if="file" class="text-xs text-slate-500">Selected: {{ file.name }}</p>
+					</div>
+					<!-- Manager creator extra field -->
+					<div v-if="isManagerCreator" class="space-y-1.5">
+						<label class="block text-sm font-medium text-slate-700" for="claim-approver">Approving Manager<span class="text-red-500">*</span></label>
+						<select id="claim-approver" v-model="selectedManagerId" required class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+							<option value="" disabled>Select manager...</option>
+							<option v-for="m in managers" :key="m._id || m.id" :value="m._id || m.id">
+								{{ m.name || m.fullName || m.email || 'Unnamed' }}
+							</option>
+						</select>
 					</div>
 					<!-- Inline error removed; errors surface via global AlertsHost -->
 				</form>
@@ -59,10 +69,17 @@
 import { ref, watch, computed } from 'vue'
 import api from '@/api/axios'
 
+// New props allow manager users to pick an approving manager
+
+
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },
 	mode: { type: String, default: 'create', validator: v => ['create','edit'].includes(v) },
-	initial: { type: Object, default: null }
+	initial: { type: Object, default: null },
+	// When true, show manager select (current user is a manager creating their own claim)
+	isManagerCreator: { type: Boolean, default: false },
+	// List of manager users (objects with _id / id & name) to choose from
+	managers: { type: Array, default: () => [] }
 })
 const emit = defineEmits(['update:modelValue','save','close','validation-error'])
 
@@ -70,6 +87,8 @@ const title = ref('')
 const description = ref('')
 const amount = ref(null)
 const file = ref(null)
+// Approving manager selection (for manager-created claims)
+const selectedManagerId = ref('')
 // Local error removed from UI; still used transiently before emitting alert
 const error = ref('')
 const saving = ref(false)
@@ -82,6 +101,13 @@ function initFromInitial() {
 	description.value = props.initial?.description || ''
 	amount.value = props.initial?.amount != null ? props.initial.amount : null
 	file.value = null
+	// Manager selection preset for edit mode
+	if (props.isManagerCreator) {
+		const initMgr = props.initial?.managerId || props.initial?.manager?._id || props.initial?.manager?._id || ''
+		selectedManagerId.value = initMgr && initMgr !== (props.initial?.selfId) ? initMgr : ''
+	} else {
+		selectedManagerId.value = ''
+	}
 	// Keep external error if provided; otherwise clear
 	if (!props.externalError) error.value = ''
 	// Reset file input if open again
@@ -126,6 +152,12 @@ function validate() {
 		error.value = 'Receipt file is required'
 		return false
 	}
+	if (props.isManagerCreator) {
+		if (!selectedManagerId.value) {
+			error.value = 'Approving manager is required'
+			return false
+		}
+	}
 	error.value = ''
 	return true
 }
@@ -142,7 +174,8 @@ async function onSave() {
 	if (error.value) error.value = ''
 	saving.value = true
 	try {
-		emit('save', { title: title.value.trim(), description: description.value.trim(), amount: Number(amount.value), file: file.value || undefined })
+		const mgrObj = props.isManagerCreator ? props.managers.find(m => (m._id||m.id) === selectedManagerId.value) : null
+		emit('save', { title: title.value.trim(), description: description.value.trim(), amount: Number(amount.value), file: file.value || undefined, managerId: props.isManagerCreator ? selectedManagerId.value : undefined, managerName: mgrObj ? (mgrObj.name || mgrObj.fullName || mgrObj.email) : undefined })
 		// Parent will close modal on successful save; we keep it open until then
 	} finally {
 		saving.value = false

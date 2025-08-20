@@ -1,5 +1,5 @@
 <template>
-	<div class="rounded-xl border border-slate-200 bg-white shadow-sm p-5 flex flex-col gap-4 hover:shadow transition-shadow">
+	<div class="rounded-xl border border-slate-200 bg-white shadow-sm p-5 flex flex-col gap-4 hover:shadow transition-shadow cursor-pointer" @click="emit('open', claim)">
 		<!-- Header -->
 		<div class="flex items-start justify-between gap-4">
 			<div class="min-w-0 flex-1">
@@ -13,7 +13,7 @@
 		</div>
 
 		<!-- Description -->
-		<div v-if="claim.description" class="text-sm text-slate-700 whitespace-pre-line line-clamp-4">{{ claim.description }}</div>
+		<div v-if="claim.description" class="text-sm text-slate-700 whitespace-pre-line line-clamp-4 break-words break-all">{{ claim.description }}</div>
 
 		<!-- Meta -->
 		<div class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
@@ -26,7 +26,7 @@
 				<span class="font-medium text-slate-700 truncate" :title="claim.manager?.name">{{ claim.manager?.name || '—' }}</span>
 			</div>
 			<div v-if="claim.receiptUrl" class="col-span-2">
-				<button type="button" @click="emit('view-receipt', claim)" class="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 cursor-pointer">
+				<button type="button" @click.stop="emit('view-receipt', claim)" class="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 cursor-pointer">
 					<img src="@/assets/eye.svg" alt="View" class="w-4 h-4" />
 					View receipt
 				</button>
@@ -37,19 +37,19 @@
 		<div v-if="showActions" class="pt-2 mt-auto flex flex-wrap gap-2">
 			<button
 				v-if="canEdit"
-				@click="emit('edit', claim)"
+				@click.stop="emit('edit', claim)"
 				type="button"
 				class="px-3 py-1.5 rounded-md text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
 			>Edit</button>
 			<button
 				v-if="canSubmit"
-				@click="emit('submit', claim)"
+				@click.stop="emit('submit', claim)"
 				type="button"
 				class="px-3 py-1.5 rounded-md text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white shadow-sm cursor-pointer"
 			>Submit</button>
 			<button
 				v-if="canDelete"
-				@click="emit('delete', claim)"
+				@click.stop="emit('delete', claim)"
 				type="button"
 				class="px-3 py-1.5 rounded-md text-xs font-medium bg-red-600 hover:bg-red-700 text-white cursor-pointer"
 			>Delete</button>
@@ -66,7 +66,7 @@ const props = defineProps({
 	canSubmit: { type: Boolean, default: false },
 	canDelete: { type: Boolean, default: false }
 })
-const emit = defineEmits(['edit','submit','delete','view-receipt'])
+const emit = defineEmits(['edit','submit','delete','view-receipt','open'])
 
 const currency = computed(() => {
 	const amount = props.claim?.amount ?? 0
