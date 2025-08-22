@@ -1,25 +1,30 @@
 <template>
-  <div class="space-y-8">
-    <div class="flex items-center justify-between flex-wrap gap-4">
-      <h1 class="text-xl font-semibold tracking-tight text-slate-800">Finance Processing</h1>
-      <button @click="refresh" :disabled="loading" class="inline-flex items-center gap-2 text-sm font-medium bg-slate-200 hover:bg-slate-300 disabled:opacity-50 px-4 py-2 rounded-md">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-3M19 5a9 9 0 00-14 3"/></svg>
-        <span>Refresh</span>
-      </button>
+  <div class="space-y-6">
+    <div class="flex flex-wrap gap-4 items-end justify-between">
+      <div>
+        <h1 class="text-xl font-semibold tracking-tight text-slate-800">Finance Processing</h1>
+        <p class="text-xs text-slate-500 mt-1">Process approved claims and mark as reimbursed.</p>
+      </div>
+      <div class="flex flex-wrap gap-2 items-center text-sm">
+        <button @click="refresh" :disabled="loading" class="inline-flex items-center gap-2 text-sm font-medium bg-slate-200 hover:bg-slate-300 disabled:opacity-50 px-4 py-2 rounded-md">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-3M19 5a9 9 0 00-14 3"/></svg>
+          <span>Refresh</span>
+        </button>
+      </div>
     </div>
 
     <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
-          <thead class="bg-slate-50 border-b border-slate-200 text-slate-600">
+          <thead class="bg-slate-50 border-b border-slate-200 text-slate-600 select-none">
             <tr class="text-left">
-              <th class="py-2 px-3 font-medium">Title</th>
-              <th class="py-2 px-3 font-medium">Employee</th>
-              <th class="py-2 px-3 font-medium">Manager</th>
-              <th class="py-2 px-3 font-medium">Amount</th>
+              <SortHeader field="title" :can-sort="false" label="Title" :sort-by="sortBy" :sort-dir="sortDir" />
+              <SortHeader field="employee" :can-sort="false" label="Employee" :sort-by="sortBy" :sort-dir="sortDir" />
+              <SortHeader field="manager" :can-sort="false" label="Manager" :sort-by="sortBy" :sort-dir="sortDir" />
+              <SortHeader field="amount" label="Amount" :sort-by="sortBy" :sort-dir="sortDir" @sort="headerSort" />
               <th class="py-2 px-3 font-medium max-w-[220px]">Description</th>
               <th class="py-2 px-3 font-medium">Receipt</th>
-              <th class="py-2 px-3 font-medium">Approved Date</th>
+              <SortHeader field="approvedAt" label="Approved Date" :sort-by="sortBy" :sort-dir="sortDir" @sort="headerSort" />
               <th class="py-2 px-3 font-medium">Actions</th>
             </tr>
           </thead>
@@ -49,7 +54,7 @@
               <td class="py-2 px-3 space-x-2">
                 <button
                   v-if="canReimburse(c)"
-                   @click.stop="confirmReimburse(c)"
+                  @click.stop="confirmReimburse(c)"
                   :disabled="actioningId===c._id"
                   class="px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-60"
                 >Reimburse</button>
@@ -63,6 +68,13 @@
             </tr>
           </tbody>
         </table>
+      </div>
+      <div class="flex items-center justify-between p-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-600" v-if="totalPages>1 || claims.length">
+        <div>Total {{ totalItems }} • Page {{ page }} / {{ totalPages }}</div>
+        <div class="flex items-center gap-2">
+          <button class="px-2 py-1 rounded bg-white border text-xs disabled:opacity-40" :disabled="page===1 || loading" @click="changePage(page-1)">Prev</button>
+          <button class="px-2 py-1 rounded bg-white border text-xs disabled:opacity-40" :disabled="page===totalPages || loading" @click="changePage(page+1)">Next</button>
+        </div>
       </div>
     </div>
   </div>
@@ -90,14 +102,26 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useAlertsStore } from '@/stores/alerts'
-import { fetchFinanceClaims, reimburseClaim, financeRejectClaim, openReceiptForClaim, enrichFinanceClaims } from '@/services/claimWorkflowService'
+import { reimburseClaim, financeRejectClaim, openReceiptForClaim, fetchClaimManager, enrichFinanceClaims } from '@/services/claimWorkflowService'
+import { fetchUser } from '@/services/userService'
+import { getFinance as fetchFinanceList } from '@/apis/claims'
 import ReasonDialog from '@/components/ReasonDialog.vue'
 import ClaimViewModal from '@/components/ClaimViewModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import { usePaginationAndSorting } from '@/composables/usePaginationAndSorting'
+import SortHeader from '@/components/SortHeader.vue'
+import { normalizeClaim } from '@/utils/claimUtils'
 
 const alerts = useAlertsStore()
+
+const { page, limit, sortBy, sortDir, status, goToPage, toggleSort, applyQueryFromRoute } = usePaginationAndSorting({
+  defaultLimit: 10,
+  defaultSortBy: 'approvedAt',
+  defaultSortDir: 'desc',
+  allowedSort: ['approvedAt','amount']
+})
 
 const claims = ref([])
 const loading = ref(false)
@@ -110,17 +134,57 @@ const viewClaim = ref(null)
 const showReimburseConfirm = ref(false)
 const pendingReimburseId = ref(null)
 const reimburseMessage = ref('')
-
-// status badge removed for finance list; replaced with approved date
+const totalPages = ref(1)
+const totalItems = ref(0)
 
 function formatCurrency(v){
   try { return new Intl.NumberFormat(undefined,{style:'currency',currency:'USD'}).format(v) } catch { return Number(v||0).toFixed(2) }
 }
 
+async function ensureAuthReady(){
+  const store = (await import('@/stores/auth')).useAuthStore()
+  if (store.token) return true
+  if (typeof store.loadFromStorage === 'function') store.loadFromStorage()
+  let tries = 0
+  while(!store.token && tries < 5){ await new Promise(r=>setTimeout(r,100)); tries++; if(!store.token && typeof store.loadFromStorage==='function') store.loadFromStorage() }
+  return !!store.token
+}
+
 async function fetchClaims(){
   loading.value = true; error.value=''
-  try { claims.value = await enrichFinanceClaims(await fetchFinanceClaims({ all: true })) }
-  catch (e) { error.value = e?.response?.data?.message || e.message || 'Failed loading claims' }
+  try {
+    await ensureAuthReady()
+    const params = { page: page.value, limit: limit.value, sortBy: sortBy.value, sortDir: sortDir.value }
+    if (status.value) params.status = status.value
+    const { items, meta } = await fetchFinanceList(params)
+    claims.value = items
+    // Enrich employee & manager names if missing
+    try { await enrichFinanceClaims(claims.value) } catch {}
+    // Per-claim detailed enrichment (manager then employee) if still unknown
+    for (const c of claims.value) {
+      // Manager enrichment first
+      if (c.manager !== null && (!c.manager || !c.manager.name || c.manager.name === 'Unknown')) {
+        try {
+          const mgr = await fetchClaimManager(c._id)
+          if (mgr) c.manager = { _id: mgr._id || mgr.id, name: mgr.name || mgr.fullName || mgr.email || 'Unknown', email: mgr.email }
+        } catch {}
+      }
+      // Employee enrichment: determine best id
+      if (!c.createdBy || !c.createdBy.name || c.createdBy.name === 'Unknown') {
+        const empId = c.createdBy?._id || c.user?._id || c.userId || c.createdById || c.user || null
+        if (empId && typeof empId === 'string') {
+          try {
+            const emp = await fetchUser(empId)
+            if (emp) c.createdBy = { _id: emp._id || emp.id, name: emp.name || emp.fullName || emp.email || 'Unknown', email: emp.email }
+          } catch (e) { if(import.meta.env.DEV) console.debug('[finance] employee enrichment failed', empId, e?.message) }
+        }
+      }
+      if (import.meta.env.DEV) console.debug('[finance] claim enrichment snapshot', { id: c._id, employee: c.createdBy && c.createdBy.name, manager: c.manager && c.manager.name })
+    }
+    totalPages.value = meta.totalPages || 1
+    totalItems.value = meta.totalItems || items.length
+    if (import.meta.env.DEV) console.debug('[finance] fetched finance claims', { tokenPresent: !!(await import('@/stores/auth')).useAuthStore().token, params, count: claims.value.length })
+  } catch (e) { error.value = e?.response?.data?.error || e?.response?.data?.message || e.message || 'Failed loading claims' }
   finally { loading.value = false }
 }
 
@@ -165,13 +229,31 @@ function openView(c){
 }
 
 function refresh(){ fetchClaims() }
+function formatDate(value){ if(!value) return '—'; try { return new Date(value).toLocaleDateString(undefined,{ year:'numeric', month:'short', day:'numeric'}) } catch { return value } }
+// Client-side stabilized sorting for visible page to compensate for backend pagination ordering quirks.
+watch([claims, sortBy, sortDir], ()=>{
+  if(!sortBy.value) return
+  claims.value = [...claims.value].sort((a,b)=>{
+    let av, bv
+    if(sortBy.value==='approvedAt') { av = a.approvedAt || a.updatedAt; bv = b.approvedAt || b.updatedAt }
+    else if(sortBy.value==='amount') { av = a.amount; bv = b.amount }
+    else { av = a[sortBy.value]; bv = b[sortBy.value] }
+    if(av instanceof Date) av = av.getTime(); if(bv instanceof Date) bv = bv.getTime()
+    if(av==null) av = 0; if(bv==null) bv = 0
+    if(av < bv) return sortDir.value==='asc' ? -1 : 1
+    if(av > bv) return sortDir.value==='asc' ? 1 : -1
+    return 0
+  })
+})
+function headerSort(field){ toggleSort(field) }
+function changePage(p){ if(p<1 || p> totalPages.value) return; goToPage(p) }
 
-function formatDate(value){
-  if(!value) return '—'
-  try { return new Date(value).toLocaleDateString(undefined,{ year:'numeric', month:'short', day:'numeric'}) } catch { return value }
-}
+watch([page, sortBy, sortDir, status], ()=> fetchClaims())
+onMounted(()=>{ applyQueryFromRoute(); fetchClaims() })
+</script>
 
-onMounted(fetchClaims)
+<script>
+export default { }
 </script>
 
 <style scoped>

@@ -12,7 +12,7 @@ const routes = [
 	{
 		path: '/register',
 		name: 'register',
-		component: () => import('../views/RegisterView.vue'),
+		component: () => import('../views/UserManagementView.vue'),
 		meta: { requiresAuth: true, roles: ['admin'] }
 	},
 	{
@@ -37,6 +37,12 @@ const routes = [
 		path: '/config',
 		name: 'config',
 		component: () => import('../views/ConfigView.vue'),
+		meta: { requiresAuth: true, roles: ['finance','admin'] }
+	},
+	{
+		path: '/claim-limits',
+		name: 'claim-limits',
+		component: () => import('../views/ClaimLimitsView.vue'),
 		meta: { requiresAuth: true, roles: ['finance','admin'] }
 	},
 	// Fallback could redirect to claims or login

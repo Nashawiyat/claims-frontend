@@ -40,21 +40,24 @@ function navClasses(active) {
           <h1 @click="go('/claims')" class="text-2xl font-bold cursor-pointer select-none tracking-tight flex items-center gap-1" title="Go to claims">
             <span class="text-blue-600">Claims<span class="text-slate-800">GT</span></span>
           </h1>
-          <nav class="flex-1 flex items-center gap-3" v-if="isAuthed && role!=='employee'">
-            <RouterLink v-if="role!=='finance'" to="/claims" v-slot="{ isActive }">
+          <nav class="flex-1 flex items-center gap-3" v-if="isAuthed">
+            <RouterLink v-if="role!=='finance' && role!=='employee'" to="/claims" v-slot="{ isActive }">
               <span :class="navClasses(isActive)">Claims</span>
             </RouterLink>
             <RouterLink v-if="role==='manager' || role==='admin'" to="/manager" v-slot="{ isActive }">
-              <span :class="navClasses(isActive)">Approvals</span>
+              <span :class="navClasses(isActive)">Team Claims</span>
             </RouterLink>
             <RouterLink v-if="role==='finance' || role==='admin'" to="/finance" v-slot="{ isActive }">
               <span :class="navClasses(isActive)">Reimbursement</span>
+            </RouterLink>
+            <RouterLink v-if="role==='finance' || role==='admin'" to="/claim-limits" v-slot="{ isActive }">
+              <span :class="navClasses(isActive)">Claim Limits</span>
             </RouterLink>
             <RouterLink v-if="role==='admin' || role==='finance'" to="/config" v-slot="{ isActive }">
               <span :class="navClasses(isActive)">Config</span>
             </RouterLink>
             <RouterLink v-if="role==='admin'" to="/register" v-slot="{ isActive }">
-              <span :class="navClasses(isActive)">Users</span>
+              <span :class="navClasses(isActive)">User Management</span>
             </RouterLink>
           </nav>
           <div v-else-if="isAuthed" class="flex-1"></div>

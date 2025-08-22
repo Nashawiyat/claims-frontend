@@ -7,6 +7,8 @@ import { useAuthStore } from './stores/auth'
 
 const app = createApp(App)
 const pinia = createPinia()
+// Expose pinia for late access inside axios interceptor without import cycles
+window.__appPinia = pinia
 app.use(pinia)
 
 // Restore persisted auth (token, user, role) before router navigation

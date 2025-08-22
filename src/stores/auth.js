@@ -23,10 +23,14 @@ export const useAuthStore = defineStore('auth', {
 	},
 	actions: {
 		async login(email, password) {
-			// Delegate to authService
-			const data = await loginUser(email, password)
-			const token = data?.token
-			const user = data?.user || null
+			const raw = await loginUser(email, password)
+			// Support multiple backend response shapes:
+			// 1) { token, user }
+			// 2) { success:true, data:{ token, user } }
+			// 3) { data:{ token, user } }
+			const container = raw?.data && (raw.token == null && raw.user == null) ? raw.data : raw
+			const token = container?.token || raw?.token
+			const user = container?.user || raw?.user || null
 			if (!token) {
 				throw new Error('Login response missing token')
 			}

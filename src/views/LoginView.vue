@@ -89,8 +89,16 @@ async function onSubmit() {
     await auth.login(email.value, password.value)
     await router.push('/claims')
   } catch (e) {
-    // Attempt to pull a message off typical error response shapes
-    const msg = e?.response?.data?.message || e?.message || 'Login failed'
+    // Derive a user-friendly message instead of raw axios error
+    const status = e?.response?.status
+    let msg = e?.response?.data?.message || e?.response?.data?.error || e?.message || 'Login failed'
+    if (status === 401) {
+      msg = 'Email or password is incorrect.'
+    } else if (status === 400 && /required|invalid/i.test(msg)) {
+      msg = 'Please provide a valid email and password.'
+    } else if (/network error/i.test(msg)) {
+      msg = 'Network error. Please check your connection.'
+    }
     error.value = msg
   } finally {
     loading.value = false

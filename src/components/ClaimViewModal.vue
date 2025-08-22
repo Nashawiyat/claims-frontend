@@ -90,8 +90,10 @@ const showRejectionReason = computed(()=> (props.claim?.status || '').toLowerCas
 const managerRef = ref(null)
 const managerName = computed(()=> {
   if (props.claim?.manager === null || props.claim?._adminClaim) return 'N/A (Admin Claim)'
-  const name = props.claim?.manager?.name || managerRef.value?.name
-  return name && name !== 'Unknown' ? name : '—'
+  const mgrObj = props.claim?.manager || managerRef.value || null
+  if (!mgrObj) return '—'
+  const candidate = mgrObj.name || mgrObj.fullName || mgrObj.email || managerRef.value?.name || managerRef.value?.email
+  return candidate && candidate !== 'Unknown' ? candidate : (mgrObj.email || '—')
 })
 
 watch(() => props.modelValue, async (open) => {

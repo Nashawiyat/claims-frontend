@@ -23,7 +23,7 @@
           </div>
           <div class="flex-1 min-w-0">
             <p class="text-sm font-semibold text-slate-800 truncate">{{ user?.name || 'Unknown User' }}</p>
-            <p class="text-xs text-slate-500 break-all">{{ maskedEmail }}</p>
+            <p class="text-xs text-slate-500 break-all">{{ user?.email }}</p>
             <p class="inline-block mt-1 text-[10px] tracking-wide uppercase bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">{{ user?.role || 'N/A' }}</p>
           </div>
         </div>
@@ -41,7 +41,6 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { maskEmail } from '../../utils/mask'
 
 const props = defineProps({
   user: { type: Object, required: false }
@@ -58,7 +57,7 @@ const initials = computed(() => {
   return parts.slice(0, 2).map(p => p[0]?.toUpperCase()).join('')
 })
 
-const maskedEmail = computed(() => maskEmail(props.user?.email))
+// Email shown in full (mask removed per requirements)
 
 function toggle() { open.value = !open.value }
 function close() { open.value = false }

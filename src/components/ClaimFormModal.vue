@@ -20,7 +20,7 @@
 						<svg class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
 					</button>
 				</div>
-				<form @submit.prevent="onSave" class="px-6 pt-4 pb-6 space-y-5 overflow-y-auto max-h-[70vh]">
+				<form @submit.prevent="openConfirmSaveDraft" class="px-6 pt-4 pb-6 space-y-5 overflow-y-auto max-h-[70vh]">
 					<div class="space-y-1.5">
 						<label class="block text-sm font-medium text-slate-700" for="claim-title">Title<span class="text-red-500">*</span></label>
 						<input id="claim-title" v-model.trim="title" type="text" required class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="e.g. Team offsite lunch" />
@@ -41,33 +41,51 @@
 						</div>
 						<p v-if="file" class="text-xs text-slate-500">Selected: {{ file.name }}</p>
 					</div>
-					<!-- Manager creator extra field -->
-					<div v-if="isManagerCreator" class="space-y-1.5">
-						<label class="block text-sm font-medium text-slate-700" for="claim-approver">Approving Manager<span class="text-red-500">*</span></label>
-						<select id="claim-approver" v-model="selectedManagerId" required class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-							<option value="" disabled>Select manager...</option>
-							<option v-for="m in managers" :key="m._id || m.id" :value="m._id || m.id">
-								{{ m.name || m.fullName || m.email || 'Unnamed' }}
-							</option>
-						</select>
-					</div>
+					<!-- Manager reviewer selection removed per updated workflow requirements -->
 					<!-- Inline error removed; errors surface via global AlertsHost -->
 				</form>
-				<div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
+				<div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-end gap-3">
 					<button @click="close" type="button" class="text-sm px-4 py-2 rounded-md border border-slate-300 bg-white hover:bg-slate-100 font-medium text-slate-700 cursor-pointer">Cancel</button>
-					<button @click="onSave" :disabled="saving" type="button" class="text-sm px-5 py-2 rounded-md font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
-						<span v-if="!saving">Save</span>
+					<button @click="openConfirmSaveDraft" :disabled="saving" type="button" class="text-sm px-4 py-2 rounded-md font-medium text-white bg-slate-600 hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
+						<span v-if="!saving || savingType!=='draft'">Save Draft</span>
 						<span v-else>Saving...</span>
+					</button>
+					<button @click="openConfirmSubmit" :disabled="saving" type="button" class="text-sm px-5 py-2 rounded-md font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
+						<span v-if="!saving || savingType!=='submit'">Submit</span>
+						<span v-else>Submitting...</span>
 					</button>
 				</div>
 			</div>
 		</div>
 	</transition>
+
+	<!-- Confirmation dialogs -->
+	<ConfirmDialog
+		:model-value="confirmSaveDraft"
+		title="Save Draft"
+		message="Save changes to this draft claim?"
+		confirm-text="Save Draft"
+		cancel-text="Cancel"
+		:loading="saving && savingType==='draft'"
+		@update:modelValue="val => confirmSaveDraft = val"
+		@confirm="performSaveDraft"
+	/>
+	<ConfirmDialog
+		:model-value="confirmSubmit"
+		title="Submit Claim"
+		message="Submit this claim for approval? You won't be able to edit it afterwards."
+		confirm-text="Submit Claim"
+		cancel-text="Cancel"
+		:loading="saving && savingType==='submit'"
+		@update:modelValue="val => confirmSubmit = val"
+		@confirm="performSubmit"
+	/>
 </template>
 
 <script setup>
 import { ref, watch, computed } from 'vue'
 import api from '@/api/axios'
+import ConfirmDialog from './ConfirmDialog.vue'
 
 // New props allow manager users to pick an approving manager
 
@@ -87,11 +105,12 @@ const title = ref('')
 const description = ref('')
 const amount = ref(null)
 const file = ref(null)
-// Approving manager selection (for manager-created claims)
+// Approving manager auto derived (for manager-created claims); backend already has supervising manager link
 const selectedManagerId = ref('')
 // Local error removed from UI; still used transiently before emitting alert
 const error = ref('')
 const saving = ref(false)
+const savingType = ref('draft')
 const fileInput = ref(null)
 
 const heading = computed(() => props.mode === 'edit' ? 'Edit Draft Claim' : 'New Draft Claim')
@@ -101,13 +120,11 @@ function initFromInitial() {
 	description.value = props.initial?.description || ''
 	amount.value = props.initial?.amount != null ? props.initial.amount : null
 	file.value = null
-	// Manager selection preset for edit mode
+	// Manager-created claims: derive supervising manager if provided; else leave blank (backend will infer existing association)
 	if (props.isManagerCreator) {
-		const initMgr = props.initial?.managerId || props.initial?.manager?._id || props.initial?.manager?._id || ''
-		selectedManagerId.value = initMgr && initMgr !== (props.initial?.selfId) ? initMgr : ''
-	} else {
-		selectedManagerId.value = ''
-	}
+		const initMgr = props.initial?.managerId || props.initial?.manager?._id || props.initial?.manager || ''
+		selectedManagerId.value = initMgr === (props.initial?.selfId) ? '' : initMgr
+	} else selectedManagerId.value = ''
 	// Keep external error if provided; otherwise clear
 	if (!props.externalError) error.value = ''
 	// Reset file input if open again
@@ -152,34 +169,114 @@ function validate() {
 		error.value = 'Receipt file is required'
 		return false
 	}
-	if (props.isManagerCreator) {
-		if (!selectedManagerId.value) {
-			error.value = 'Approving manager is required'
-			return false
-		}
-	}
+	// For manager self-claims we no longer force selecting approving manager here; backend enforces relationship.
 	error.value = ''
 	return true
 }
 
-async function onSave() {
-	if (saving.value) return
-	if (!validate()) {
-		// Emit validation error upward for global alert handling
-	emit('validation-error', error.value)
-	return
+async function basePayload(){
+	return { title: title.value.trim(), description: description.value.trim(), amount: Number(amount.value) }
+}
+
+function deriveBackendMessage(respData){
+	if(!respData) return ''
+	return respData.error || respData.message || respData.msg || ''
+}
+
+function mapErrorMessage(e){
+	const code = e?.response?.data?.code
+	const backendMsg = deriveBackendMessage(e?.response?.data)
+	// Treat any explicit code, or message containing limit / exceed variants, as limit exceeded
+	if(code === 'LIMIT_EXCEEDED' || /limit/i.test(backendMsg) || /exceed/i.test(backendMsg) || /exceeds allowed remaining/i.test(backendMsg)) {
+		return 'Submitting this claim would exceed your remaining limit'
 	}
-	// Clear previous external/server error before attempting save again
-	// Clear transient error
-	if (error.value) error.value = ''
+	return backendMsg || e.message || 'Request failed'
+}
+
+async function doPersist(submit){
+	const base = await basePayload()
+	// Build FormData only if file present (otherwise send JSON)
+	const usingFormData = !!file.value
+	const fd = usingFormData ? new FormData() : null
+	const appendField = (k,v)=> { if(usingFormData) fd.append(k,v); else base[k]=v }
+	Object.entries(base).forEach(([k,v])=> appendField(k,v))
+	// Only append manager override if explicitly chosen (e.g., admin creating for employee); managers creating their own claim rely on backend stored supervising manager
+	if(props.isManagerCreator && selectedManagerId.value){
+		appendField('manager', selectedManagerId.value)
+	}
+	if(file.value) fd.append('receipt', file.value)
+
+	// DEV logging helper
+	try {
+		if(props.mode==='create') {
+			// New claim: single POST; backend enforces limit if submit flag present
+			const config = submit ? { params: { submit:true } } : {}
+			const endpoint = '/api/claims'
+				if(submit){
+					// ensure backend sees submit flag in body/form as well as query for maximum compatibility
+					if(usingFormData) fd.append('submit','true')
+					else base.submit = true
+				}
+			const res = usingFormData ? await api.post(endpoint, fd, config) : await api.post(endpoint, base, config)
+			return res.data
+		} else if (props.mode==='edit' && props.initial?._id) {
+			const id = props.initial._id
+			// 1. Always persist latest draft changes via PATCH (no optimistic status change)
+			const patchEndpoint = `/api/claims/${id}`
+			const patchRes = usingFormData ? await api.patch(patchEndpoint, fd) : await api.patch(patchEndpoint, base)
+			if(!submit) return patchRes.data
+			// 2. Submit via dedicated submit endpoint to ensure server validation
+			const submitEndpoint = `/api/claims/${id}/submit`
+			const submitRes = await api.put(submitEndpoint)
+			return submitRes.data
+		}
+	} catch(e){
+		const mapped = mapErrorMessage(e)
+		// Re-throw with mapped message for outer handler
+		const err = new Error(mapped)
+		err.original = e
+		throw err
+	}
+}
+
+// Confirmation dialog state
+const confirmSaveDraft = ref(false)
+const confirmSubmit = ref(false)
+
+function openConfirmSaveDraft(){
+	if(saving.value) return
+	if(!validate()){ emit('validation-error', error.value); return }
+	confirmSaveDraft.value = true
+}
+function openConfirmSubmit(){
+	if(saving.value) return
+	if(!validate()){ emit('validation-error', error.value); return }
+	confirmSubmit.value = true
+}
+
+async function performSaveDraft(){
+	if(saving.value) return
+	savingType.value='draft'
 	saving.value = true
 	try {
-		const mgrObj = props.isManagerCreator ? props.managers.find(m => (m._id||m.id) === selectedManagerId.value) : null
-		emit('save', { title: title.value.trim(), description: description.value.trim(), amount: Number(amount.value), file: file.value || undefined, managerId: props.isManagerCreator ? selectedManagerId.value : undefined, managerName: mgrObj ? (mgrObj.name || mgrObj.fullName || mgrObj.email) : undefined })
-		// Parent will close modal on successful save; we keep it open until then
-	} finally {
-		saving.value = false
-	}
+		await doPersist(false)
+		confirmSaveDraft.value = false
+		emit('save', { submitted:false })
+	} catch(e){
+		emit('validation-error', e.message || 'Failed saving draft')
+	} finally { saving.value=false }
+}
+async function performSubmit(){
+	if(saving.value) return
+	savingType.value='submit'
+	saving.value = true
+	try {
+		await doPersist(true)
+		confirmSubmit.value = false
+		emit('save', { submitted:true })
+	} catch(e){
+		emit('validation-error', e.message || 'Failed submitting claim')
+	} finally { saving.value=false }
 }
 
 function handleBackdrop() {

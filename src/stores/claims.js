@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import api from '@/api/axios'
 import { useAuthStore } from '@/stores/auth'
 import { fetchUser, fetchUserManager, fetchManagers } from '@/services/userService'
+import { fetchClaimManager } from '@/services/claimWorkflowService'
 import { normalizeClaim } from '@/utils/claimUtils'
 
 export const useClaimsStore = defineStore('claims', {
@@ -19,14 +20,34 @@ export const useClaimsStore = defineStore('claims', {
 		byId: (state) => (id) => state.items.find(c => c._id === id)
 	},
 	actions: {
+		// Internal helper: robustly extract claim object from diverse backend success wrapper shapes
+		_extractClaim(payload){
+			if(!payload) return payload
+			// Accept shapes: { claim:{...} }, { data:{ claim:{...} } }, nested success wrappers
+			if(payload.claim) return payload.claim
+			if(payload.data?.claim) return payload.data.claim
+			if(payload.data?.data?.claim) return payload.data.data.claim
+			return payload // fallback (assumed raw claim)
+		},
 		async fetchMine() {
 			this.loading = true; this.error = null
 			try {
 				const { data } = await api.get('/api/claims/mine')
-				const list = Array.isArray(data) ? data : (data?.claims || [])
-				this.items = list.map(normalizeClaim)
+				// Accept multiple backend shapes:
+				// 1) Legacy: [ ...claims ]
+				// 2) Legacy object: { claims: [ ... ] }
+				// 3) Paginated (flat): { items:[...], page,totalPages,totalItems }
+				// 4) Paginated (enveloped): { success:true, data:{ items:[...], page,... } }
+				let listRaw
+				if (Array.isArray(data)) listRaw = data
+				else if (Array.isArray(data?.claims)) listRaw = data.claims
+				else if (Array.isArray(data?.items)) listRaw = data.items
+				else if (Array.isArray(data?.data?.items)) listRaw = data.data.items
+				else listRaw = []
+				this.items = listRaw.map(normalizeClaim)
 				// New extended limit info can arrive with list response
 				this._maybeUpdateSummary(data)
+				if (data?.data) this._maybeUpdateSummary(data.data)
 				// Immediate fallback enrichment using auth user (self + manager id)
 				await this.ensureSelfAndManagerNames()
 				// Attempt to enrich user + manager names without blocking initial paint
@@ -39,59 +60,120 @@ export const useClaimsStore = defineStore('claims', {
 		},
 		_maybeUpdateSummary(payload) {
 			if (!payload) return
-			// Accept various shapes: direct fields, nested limit object, or legacy fields
-			const obj = payload.limit || payload.claimLimit || payload
-			// New field names from backend
-			const limit = obj.effectiveClaimLimit ?? obj.limit ?? obj.amount ?? obj.max
-			const used = obj.usedClaimAmount ?? obj.used ?? obj.consumed
-			const remaining = obj.remainingClaimLimit ?? obj.remaining ?? (typeof limit === 'number' && typeof used === 'number' ? (limit - used) : undefined)
+			// Accept various shapes: { limit:{ total, used, remaining } }, { claimLimit:{...} }, or flat with diverse field naming
+			// IMPORTANT: Some list endpoints return nested limit { total } ONLY while exposing used & remaining at the ROOT level.
+			// Previous logic ignored root-level used/remaining when nested limit existed, resulting in 0 used/remaining in Claims view.
+			const nested = payload.limit || payload.claimLimit
+			const root = payload
+			// Field resolution with per-field fallback (nested -> root -> derive)
+			const limit = (
+				nested?.effectiveClaimLimit ?? nested?.total ?? nested?.limit ??
+				root.effectiveClaimLimit ?? root.total ?? root.limit ?? root.amount ?? root.max
+			)
+			let used = (
+				nested?.usedClaimAmount ?? nested?.used ?? nested?.usedAmount ?? nested?.consumed ??
+				root.usedClaimAmount ?? root.used ?? root.usedAmount ?? root.consumed
+			)
+			let remaining = (
+				nested?.remainingClaimLimit ?? nested?.remaining ??
+				root.remainingClaimLimit ?? root.remaining
+			)
+			// Derive missing values when possible
+			if (typeof remaining !== 'number' && typeof limit === 'number' && typeof used === 'number') remaining = limit - used
+			if (typeof used !== 'number' && typeof limit === 'number' && typeof remaining === 'number') used = limit - remaining
 			this.summary = {
 				limit: typeof limit === 'number' ? limit : (this.summary.limit || 0),
 				used: typeof used === 'number' ? used : (this.summary.used || 0),
 				remaining: typeof remaining === 'number' ? remaining : (typeof limit === 'number' && typeof used === 'number' ? limit - used : this.summary.remaining || 0)
 			}
 		},
-		async ensureSelfAndManagerNames() {
+		async ensureSelfAndManagerNames(listOverride) {
 			const auth = useAuthStore()
 			const self = auth?.user
 			if (!self) return
-			// Cache self
+			const list = Array.isArray(listOverride) ? listOverride : this.items
 			if (self._id && !this._userCache[self._id]) this._userCache[self._id] = self
-			for (const c of this.items) {
+			for (const c of list) {
 				if (!c.createdBy || !c.createdBy._id || c.createdBy._id === self._id) {
 					c.createdBy = { _id: self._id, name: self.name || self.fullName || self.email || 'Me' }
 				}
 			}
-			// Manager: if self has manager id and we haven't populated
-			if (self.manager && !this._userCache[self.manager]) {
-				try {
-					// Use fetchUserManager with employee id (self._id) to comply with authorization rules
-					const mgr = await fetchUserManager(self._id)
-					if (mgr) this._userCache[mgr._id || mgr.id] = mgr
-					for (const c of this.items) {
-						if (c.manager === null) {
-							c._adminClaim = true
-							continue
-						}
-						if (!c.manager || !c.manager._id || c.manager._id === self.manager) {
-							c.manager = mgr ? { _id: mgr._id || mgr.id, name: mgr.name || mgr.fullName || mgr.email || 'Manager' } : c.manager
+			// Only inject self's manager for claims where manager id matches self.manager AND claim lacks a name; do not overwrite existing labels
+			if (self.manager) {
+				let mgrObj = this._userCache[self.manager]
+				if (!mgrObj) {
+					try { mgrObj = await fetchUserManager(self._id); if (mgrObj) this._userCache[mgrObj._id || mgrObj.id] = mgrObj } catch {}
+				}
+				if (mgrObj) {
+					for (const c of list) {
+						if (!c.manager || !c.manager._id) continue
+						if (c.manager._id === (mgrObj._id || mgrObj.id) && (!c.manager.name || c.manager.name === 'Unknown')) {
+							c.manager = { _id: mgrObj._id || mgrObj.id, name: mgrObj.name || mgrObj.fullName || mgrObj.email || 'Manager' }
 						}
 					}
-				} catch (e) {
-					// ignore (403 etc.)
 				}
 			}
+			// Draft-specific fallback: if a draft claim still has an unknown manager name but has a manager id, fetch that manager directly once.
+			const draftClaimsNeedingMgr = list.filter(c => c.status === 'draft' && c.manager && c.manager._id && (!c.manager.name || c.manager.name === 'Unknown'))
+			if (draftClaimsNeedingMgr.length) {
+				const authRole = auth?.role
+				if (authRole === 'employee') {
+					// Single fetch via employee->manager endpoint (authorized) then assign to all matching drafts
+					try {
+						const mgr = await fetchUserManager(self._id)
+						if (mgr) {
+							this._userCache[mgr._id || mgr.id] = mgr
+							for (const c of draftClaimsNeedingMgr) {
+								if (c.manager && c.manager._id === (mgr._id || mgr.id)) {
+									c.manager = { _id: mgr._id || mgr.id, name: mgr.name || mgr.fullName || mgr.email || 'Manager' }
+								}
+							}
+						}
+					} catch {/* ignore */}
+				} else {
+					// Non-employee (manager/admin) attempt direct fetch per missing manager id (may still 403 for some)
+					await Promise.all(draftClaimsNeedingMgr.map(async c => {
+						const mid = c.manager._id
+						if (this._userCache[mid]) {
+							const u = this._userCache[mid]
+							c.manager = { _id: u._id || u.id, name: u.name || u.fullName || u.email || c.manager.name || 'Manager' }
+							return
+						}
+						try {
+							const u = await fetchUser(mid)
+							if (u) {
+								this._userCache[mid] = u
+								c.manager = { _id: u._id || u.id, name: u.name || u.fullName || u.email || c.manager.name || 'Manager' }
+							}
+						} catch {/* ignore permission issues */}
+					}))
+				}
+			}
+			// Final fallback: per-claim manager endpoint (works for employees) for any draft still unknown
+			const stillUnknownDrafts = list.filter(c => c.status === 'draft' && c.manager && c.manager._id && (!c.manager.name || c.manager.name === 'Unknown'))
+			if (stillUnknownDrafts.length) {
+				await Promise.all(stillUnknownDrafts.map(async c => {
+					try {
+						const mgr = await fetchClaimManager(c._id)
+						if (mgr && (mgr._id || mgr.id)) {
+							this._userCache[mgr._id || mgr.id] = mgr
+							c.manager = { _id: mgr._id || mgr.id, name: mgr.name || mgr.fullName || mgr.email || 'Manager' }
+						}
+					} catch {/* ignore individual errors */}
+				}))
+			}
 		},
-		async enrichUsers() {
+		async enrichUsers(listOverride) {
 			const auth = useAuthStore()
 			const role = auth?.role
 			const selfId = auth?.user?._id || auth?.user?.id
-			const toFetchUserIds = new Set() // user ids safe to fetch directly
-			const employeeIdsNeedingManager = new Set() // employees whose manager we derive
-			const approverManagerIdsNeedingName = new Set() // manager approver ids (claim.manager) with unknown names
-			const createdByPotentialManagerIds = new Set() // createdBy ids that might be managers (avoid direct fetch to prevent 403)
-			const claimDetailCreatorIds = new Set() // creators we will resolve via claim detail endpoint instead of fetchUser
-			for (const c of this.items) {
+			const list = Array.isArray(listOverride) ? listOverride : this.items
+			const toFetchUserIds = new Set()
+			const employeeIdsNeedingManager = new Set()
+			const approverManagerIdsNeedingName = new Set()
+			const createdByPotentialManagerIds = new Set()
+			const claimDetailCreatorIds = new Set()
+			for (const c of list) {
 				if (c.manager === null) { c._adminClaim = true }
 				// createdBy enrichment
 				if (c.createdBy) {
@@ -144,7 +226,7 @@ export const useClaimsStore = defineStore('claims', {
 			if (toFetchUserIds.size) {
 				// Extra defensive filtering: if role=manager, avoid direct fetch for ids that appear as any claim.createdBy or claim.manager with unknown name (likely managers) to prevent 403.
 				if (role === 'manager') {
-					for (const c of this.items) {
+					for (const c of list) {
 						const createdById = typeof c.createdBy === 'string' ? c.createdBy : c.createdBy?._id
 						if (createdById && toFetchUserIds.has(createdById) && createdById !== selfId) {
 							toFetchUserIds.delete(createdById)
@@ -160,7 +242,7 @@ export const useClaimsStore = defineStore('claims', {
 				}))
 			}
 			// Apply user details (createdBy & manager)
-			for (const c of this.items) {
+			for (const c of list) {
 				if (c.createdBy) {
 					const id = typeof c.createdBy === 'string' ? c.createdBy : c.createdBy._id
 					const u = id && this._userCache[id]
@@ -192,7 +274,7 @@ export const useClaimsStore = defineStore('claims', {
 					if (empUser && (empUser.role === 'manager' || empUser.role === 'admin')) return
 					const mgr = await fetchUserManager(empId)
 					if (mgr && (mgr._id || mgr.id)) this._userCache[mgr._id || mgr.id] = mgr
-					for (const c of this.items) {
+					for (const c of list) {
 						if (c.createdBy && typeof c.createdBy !== 'string' && c.createdBy._id === empId && (!c.manager || !c.manager._id)) {
 							if (mgr) c.manager = { _id: mgr._id || mgr.id, name: mgr.name || mgr.fullName || mgr.email || 'Manager' }
 						}
@@ -202,7 +284,7 @@ export const useClaimsStore = defineStore('claims', {
 			// FINAL PASS: Use new backend claim-by-id endpoint to resolve creator names for claims assigned to this manager
 			if (role === 'manager' && auth?.user?._id) {
 				const selfId = auth.user._id
-				await Promise.all(this.items
+				await Promise.all(list
 					.filter(c => c.manager && c.manager._id === selfId && c.createdBy && (!c.createdBy.name || c.createdBy.name === 'Unknown') && claimDetailCreatorIds.has(typeof c.createdBy === 'string' ? c.createdBy : c.createdBy._id))
 					.map(async c => {
 						try {
@@ -235,6 +317,28 @@ export const useClaimsStore = defineStore('claims', {
 				console.warn('Failed fetching claim limit', e)
 			}
 		},
+		async fetchMyLimitViaList() {
+			try {
+				const auth = useAuthStore()
+				const userId = auth?.user?._id || auth?.user?.id
+				if(!userId) return
+				const role = auth?.role || auth?.user?.role
+				// Only finance/admin authorized for aggregated list. Others fallback immediately to single endpoint.
+				if(role !== 'finance' && role !== 'admin') {
+					return await this.fetchMyLimit()
+				}
+				const { data } = await api.get('/api/users/claim-limits')
+				const items = data?.data?.items || data?.items || []
+				const mine = items.find(u => u._id === userId)
+				if(mine) this._maybeUpdateSummary(mine)
+			} catch (e){
+				// If we received a 403 (e.g., role recently changed), fallback to single endpoint.
+				if(e?.response?.status === 403) {
+					await this.fetchMyLimit().catch(()=>{})
+				}
+			}
+		},
+		updateSummaryFrom(payload){ this._maybeUpdateSummary(payload) },
 		async createDraft({ title, description, amount, file, managerId, managerName }) {
 			this.error = null
 			try {
@@ -251,11 +355,20 @@ export const useClaimsStore = defineStore('claims', {
 					if (managerId) body.manager = managerId
 					res = await api.post('/api/claims', body)
 				}
-				const claimRaw = res.data?.claim || res.data
+				const claimRaw = this._extractClaim(res.data)
 				const claim = normalizeClaim(claimRaw)
 				// If backend only returned manager id (or nothing) but we know selection, inject immediately for UI responsiveness
 				if (managerId && (!claim.manager || !claim.manager.name || claim.manager.name === 'Unknown')) {
 					claim.manager = { _id: managerId, name: managerName || 'Unknown' }
+				}
+				// Immediate createdBy fallback so new card never shows "Unknown"
+				const auth = useAuthStore()
+				if (auth?.user) {
+					const selfId = auth.user._id || auth.user.id
+					const selfName = auth.user.name || auth.user.fullName || auth.user.email || 'Me'
+					if (!claim.createdBy || (typeof claim.createdBy === 'string' && claim.createdBy === selfId) || (claim.createdBy._id && claim.createdBy._id === selfId && (!claim.createdBy.name || claim.createdBy.name === 'Unknown'))) {
+						claim.createdBy = { _id: selfId, name: selfName }
+					}
 				}
 				this.items.push(claim)
 				// Update limit summary if backend returned extended fields
@@ -290,14 +403,24 @@ export const useClaimsStore = defineStore('claims', {
 					if (managerId) body.manager = managerId
 					res = await api.patch(`/api/claims/${id}`, body)
 				}
-				const claimRaw = res.data?.claim || res.data
+				const claimRaw = this._extractClaim(res.data)
 				const updated = normalizeClaim(claimRaw)
 				if (managerId && (!updated.manager || !updated.manager.name || updated.manager.name === 'Unknown')) {
 					updated.manager = { _id: managerId, name: managerName || 'Unknown' }
 				}
+				// Immediate createdBy fallback
+				const auth = useAuthStore()
+				if (auth?.user) {
+					const selfId = auth.user._id || auth.user.id
+					const selfName = auth.user.name || auth.user.fullName || auth.user.email || 'Me'
+					if (!updated.createdBy || (typeof updated.createdBy === 'string' && updated.createdBy === selfId) || (updated.createdBy._id && updated.createdBy._id === selfId && (!updated.createdBy.name || updated.createdBy.name === 'Unknown'))) {
+						updated.createdBy = { _id: selfId, name: selfName }
+					}
+				}
 				const idx = this.items.findIndex(c => c._id === id)
-				if (idx !== -1) this.items.splice(idx, 1, updated)
-				else this.items.push(updated)
+				if (idx !== -1) {
+					this.items.splice(idx, 1, { ...this.items[idx], ...updated })
+				} else this.items.push(updated)
 				this._maybeUpdateSummary(res.data)
 				if (updated.createdBy?.name === 'Unknown' || !updated.manager) this.enrichUsers().catch(()=>{})
 				return updated
@@ -316,20 +439,33 @@ export const useClaimsStore = defineStore('claims', {
 				throw e
 			}
 		},
-		async submitDraft(id) {
+		async submitDraft(id, { preferListLimit = false } = {}) {
 			this.error = null
 			try {
 				const { data, status } = await api.put(`/api/claims/${id}/submit`)
-				const claimRaw = data?.claim || data
+				const claimRaw = this._extractClaim(data)
 				const updated = normalizeClaim(claimRaw)
+				// Immediate createdBy fallback (submitted state)
+				const auth = useAuthStore()
+				if (auth?.user) {
+					const selfId = auth.user._id || auth.user.id
+					const selfName = auth.user.name || auth.user.fullName || auth.user.email || 'Me'
+					if (!updated.createdBy || (typeof updated.createdBy === 'string' && updated.createdBy === selfId) || (updated.createdBy._id && updated.createdBy._id === selfId && (!updated.createdBy.name || updated.createdBy.name === 'Unknown'))) {
+						updated.createdBy = { _id: selfId, name: selfName }
+					}
+				}
 				const idx = this.items.findIndex(c => c._id === id)
 				if (idx !== -1) this.items.splice(idx, 1, updated)
 				else this.items.push(updated)
 				// Summary update only if a success status and data carries limit info
 				if (status >= 200 && status < 300) this._maybeUpdateSummary(data)
-				// Always fetch latest limit after submission (submission affects used amount)
-				// even if backend didn't embed limit fields in response
-				await this.fetchMyLimit()
+				// Refresh latest limit after submission. If UI needs to rely strictly on the list values
+				// (as Claim Limits view shows), fetch list first to keep remaining consistent.
+				if (preferListLimit) {
+					await this.fetchMyLimitViaList()
+				} else {
+					await this.fetchMyLimit()
+				}
 				if (updated.createdBy?.name === 'Unknown' || !updated.manager) this.enrichUsers().catch(()=>{})
 				return updated
 			} catch (e) {

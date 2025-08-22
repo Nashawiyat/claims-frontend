@@ -1,6 +1,7 @@
 // Claim workflow related API calls (manager + finance operations)
 // Centralizes endpoints so view components stay slim.
 import api from '@/api/axios'
+import { useAuthStore } from '@/stores/auth'
 import { normalizeClaim } from '@/utils/claimUtils'
 import { fetchUser } from '@/services/userService'
 
@@ -8,32 +9,33 @@ function extractList(data) {
   return Array.isArray(data) ? data : (data?.claims || data?.items || [])
 }
 
+// Ensure token is ready before performing protected calls.
+// Retries a few times (quick backoff) if store not yet populated (e.g., initial app load race).
+async function ensureAuthToken(maxTries = 4) {
+  const auth = useAuthStore()
+  let attempt = 0
+  while (attempt < maxTries && !auth.token) {
+    auth.loadFromStorage()
+    if (auth.token) break
+    attempt++
+    await new Promise(r => setTimeout(r, 100 * attempt))
+  }
+  return !!auth.token
+}
+
 // Manager scope
-export async function fetchManagerClaims(opts = {}) {
-  const { all } = opts
-  if(!all){
-    const { data } = await api.get('/api/claims/manager')
-    return extractList(data).map(normalizeClaim)
+export async function fetchManagerClaims(params = {}) {
+  const hasToken = await ensureAuthToken()
+  if (!hasToken) {
+    if (import.meta.env.DEV) console.debug('[claims][manager] aborting fetch: token not ready after retries')
+    throw new Error('Authentication not ready')
   }
-  // Auto-paginate until fewer than pageSize returned or no more pages metadata.
-  const pageSize = opts.pageSize || 50
-  let page = 1
-  const allClaims = []
-  // Support both count-based and nextPage metadata; stop when empty or repeated.
-  while(true){
-    const { data } = await api.get('/api/claims/manager', { params: { page, limit: pageSize } })
-    const list = extractList(data).map(normalizeClaim)
-    if(!list.length) break
-    allClaims.push(...list)
-    // Break if received less than requested, or metadata indicates end
-    const totalPages = data?.totalPages || data?.pages
-    if(list.length < pageSize) break
-    if(totalPages && page >= totalPages) break
-    page += 1
-    // Safety cap to avoid infinite loops
-    if(page > 200) break
-  }
-  return allClaims
+  const { page=1, limit=10, sortBy='submittedAt', sortDir='desc', status } = params
+  const query = { page, limit, sortBy, sortDir }
+  if (status) query.status = status
+  const { data } = await api.get('/api/claims/team', { params: query })
+  const items = extractList(data).map(normalizeClaim)
+  return { items, meta: data?.data || data }
 }
 export async function approveClaim(id) {
   if (!id) throw new Error('approveClaim: id required')
@@ -48,27 +50,18 @@ export async function rejectClaim(id, reason) {
 }
 
 // Finance scope
-export async function fetchFinanceClaims(opts = {}) {
-  const { all } = opts
-  if(!all){
-    const { data } = await api.get('/api/claims/finance')
-    return extractList(data).map(normalizeClaim)
+export async function fetchFinanceClaims(params = {}) {
+  const hasToken = await ensureAuthToken()
+  if (!hasToken) {
+    if (import.meta.env.DEV) console.debug('[claims][finance] aborting fetch: token not ready after retries')
+    throw new Error('Authentication not ready')
   }
-  const pageSize = opts.pageSize || 50
-  let page = 1
-  const allClaims = []
-  while(true){
-    const { data } = await api.get('/api/claims/finance', { params: { page, limit: pageSize } })
-    const list = extractList(data).map(normalizeClaim)
-    if(!list.length) break
-    allClaims.push(...list)
-    const totalPages = data?.totalPages || data?.pages
-    if(list.length < pageSize) break
-    if(totalPages && page >= totalPages) break
-    page += 1
-    if(page > 200) break
-  }
-  return allClaims
+  const { page=1, limit=10, sortBy='approvedAt', sortDir='desc', status } = params
+  const query = { page, limit, sortBy, sortDir }
+  if (status) query.status = status
+  const { data } = await api.get('/api/claims/finance', { params: query })
+  const items = extractList(data).map(normalizeClaim)
+  return { items, meta: data?.data || data }
 }
 export async function reimburseClaim(id) {
   if (!id) throw new Error('reimburseClaim: id required')
@@ -86,7 +79,11 @@ export async function financeRejectClaim(id, reason) {
 export async function fetchClaimManager(id) {
   if (!id) throw new Error('fetchClaimManager: id required')
   const { data } = await api.get(`/api/claims/${id}/manager`)
-  return data?.manager || data
+  const mgr = data?.data?.manager || data?.manager || null
+  if (import.meta.env.DEV) {
+    console.debug('[claimWorkflow] fetchClaimManager raw keys', Object.keys(data||{}), 'resolved', mgr && { _id: mgr._id, name: mgr.name, email: mgr.email })
+  }
+  return mgr || data
 }
 
 // Receipt helper consolidates blob logic for reuse
